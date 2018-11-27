@@ -147,7 +147,7 @@ CROSS APPLY (
 
             Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Looping on SqlTask results for [ $($Plan.Frequency) ] and [ $($Plan.ScheduleName) ]"
             foreach ($SqlTask in $SqlTaskData.Node) {
-                if (($null -ne $SqlTask.SelectedDatabases) -or ($SqlTask.DatabaseSelectionType -eq 3)) {
+                if ($SqlTask.HasAttribute('SQLTask:BackupDeviceType')) {
                     if (($Plan.ScheduleName -like '*Full*' -and $SqlTask.BackupFileExtension -eq '') -or
                         ($Plan.ScheduleName -like '*Diff*' -and $SqlTask.BackupFileExtension -in ('dif', 'bak')) -or
                         ($Plan.ScheduleName -like '*Trans*' -and $SqlTask.BackupFileExtension -eq 'trn')
