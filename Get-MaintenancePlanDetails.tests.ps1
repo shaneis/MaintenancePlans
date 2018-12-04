@@ -27,7 +27,7 @@ Describe 'Testing Get-MaintenancePlanDetails results' {
     
     Context 'Backup Results' {
         BeforeAll {
-            Mock Invoke-Sqlcmd {
+            Mock Invoke-DbaQuery {
                 [PSCustomObject]@{
                     maintenance_plan_xml = Get-Content -Path "$here\TestMaintenancePlanXml.xml" -Raw
                     Frequency = "Daily: At 00:00:00"
@@ -38,9 +38,9 @@ Describe 'Testing Get-MaintenancePlanDetails results' {
             }
         }
 
-        It 'should call the mocked "Invoke-Sqlcmd"' {
+        It 'should call the mocked "Invoke-DbaQuery"' {
             $null = Get-MaintenancePlanDetails -ServerName localhost
-            Assert-MockCalled -CommandName Invoke-Sqlcmd -Times 1
+            Assert-MockCalled -CommandName Invoke-DbaQuery -Times 1
         }
 
         It 'should return a result for default parameters' {
