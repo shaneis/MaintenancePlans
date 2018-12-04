@@ -1,3 +1,4 @@
+#requires -modules dbatools
 function Get-MaintenancePlanDetails {
     <#
         .SYNOPSIS
@@ -7,7 +8,7 @@ function Get-MaintenancePlanDetails {
             Queries for the SSIS data for the maintenance plan xml and returns the details from the xml information.
             
         .EXAMPLE
-            PS C:\> Get-MaintenancePlanDetails -SqlInstance DBDEVSERVER01 -Name 'USER-DB-BACKUP-DAILY' -Backup
+            PS C:\> Get-MaintenancePlanDetails -SqlInstance DBDEVSERVER01 -Name 'USER-DB-BACKUP-DAILY'
 
             Returns information on the maintenance plan 'USER-DB-BACKUP-DAILY' on the server 'DBDEVSERVER01' for backup information.
         
@@ -17,8 +18,8 @@ function Get-MaintenancePlanDetails {
         .PARAMETER Name
             Name of the Maintenance Plan to filter down to.
     #>
-    [CmdletBinding()]
-    [OutputType([PSCustomObject])]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+    [OutputType('MaintenancePlanDetails')]
     param (
         [Parameter(ValueFromPipelineByPropertyName)]
         [Alias('Server', 'ServerName', 'Instance', 'InstanceName')]
@@ -130,41 +131,46 @@ CROSS APPLY (
 
     process {
         Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Retrieving SQL results."
-        $MaintenancePlanXml = Invoke-Sqlcmd -ServerInstance $SqlInstance -Database msdb -Query $MaintenancePlanQry -MaxCharLength ([Int]::MaxValue)
+        if ($PSCmdlet.ShouldProcess($SqlInstance, 'Retrieving maintenance plan xml')) {
+            $MaintenancePlanXml = Invoke-DbaQuery -SqlInstance $SqlInstance -Database msdb -Query $MaintenancePlanQry 
+        }
 
-        Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Looping over [ $($MaintenancePlanXml.Count) ] rows for processing"
-        foreach ($Plan in $MaintenancePlanXml) {
-            
-            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Removing <DTS:DesignTimeProperties> Node"
-            $XmlString = ($Plan.maintenance_plan_xml -replace "`n", " ") -replace "<DTS:DesignTimeProperties>.*</DTS:DesignTimeProperties>"
-            $XmlString | Format-Table | Out-String | Write-Debug
-            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Removed <DTS:DesignTimeProperties> Node"
+        if ($PSCmdlet.ShouldProcess($SqlInstance, 'Querying for backup details')) {
+            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Looping over [ $($MaintenancePlanXml.Count) ] rows for processing"
+            foreach ($Plan in $MaintenancePlanXml) {
+                
+                # If there's a DesignTimeProperties node, we can't turn the DataRow into an XML document.
+                Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Removing <DTS:DesignTimeProperties> Node"
+                $XmlString = ($Plan.maintenance_plan_xml -replace "`n", " ") -replace "<DTS:DesignTimeProperties>.*</DTS:DesignTimeProperties>"
+                $XmlString | Format-Table | Out-String | Write-Debug
+                Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Removed <DTS:DesignTimeProperties> Node"
 
-            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Querying XML for SqlTaskData"
-            $SqlTaskData = Select-Xml @Xpath -Content $XmlString
-            $SqlTaskData | Format-Table | Out-String | Write-Debug
-            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Queried XML for SqlTaskData"
+                Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Querying XML for SqlTaskData"
+                $SqlTaskData = Select-Xml @Xpath -Content $XmlString
+                $SqlTaskData | Format-Table | Out-String | Write-Debug
+                Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Queried XML for SqlTaskData"
 
-            Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Looping on SqlTask results for [ $($Plan.Frequency) ] and [ $($Plan.ScheduleName) ]"
-            foreach ($SqlTask in $SqlTaskData.Node) {
-                if ($SqlTask.HasAttribute('SQLTask:BackupDeviceType')) {
-                    if (($Plan.ScheduleName -like '*Full*' -and $SqlTask.BackupFileExtension -eq '') -or
-                        ($Plan.ScheduleName -like '*Diff*' -and $SqlTask.BackupFileExtension -in ('dif', 'bak')) -or
-                        ($Plan.ScheduleName -like '*Trans*' -and $SqlTask.BackupFileExtension -eq 'trn')
-                    ) {
-                        [PSCustomObject]@{
-                            TaskName                 = if ($null -eq $SqlTask.TaskName -or $SqlTask.TaskName -eq '') { $Plan.JobName } else { $SqlTask.TaskName }
-                            Frequency                = $Plan.Frequency
-                            IgnoreNotOnlineDatabases = $SqlTask.IgnoreDatabasesInNotOnlineState
-                            BackupAction             = [BackupAction]$SqlTask.BackupAction
-                            BackupExtension          = $SqlTask.BackupFileExtension
-                            BackupDevice             = [BackupDevice]$SqlTask.BackupDeviceType
-                            Compression              = [BackupCompressionAction]$SqlTask.BackupCompressionAction
-                            CopyOnly                 = $SqlTask.CopyOnlyBackup
-                            IsEncrypted              = $SqlTask.IsBackupEncrypted
-                            HasChecksum              = $SqlTask.Checksum
-                            SelectedDatabases        = ($SqlTask.SelectedDatabases).DatabaseName
-                            PSTypeName               = 'MaintenancePlanDetails'
+                Write-Verbose "[$((Get-Date).TimeOfDay) PROCESS]: Looping on SqlTask results for [ $($Plan.ScheduleName) ]"
+                foreach ($SqlTask in $SqlTaskData.Node) {
+                    if ($SqlTask.HasAttribute('SQLTask:BackupAction')) {
+                        if (($Plan.ScheduleName -like '*Full*' -and $SqlTask.BackupFileExtension -eq '') -or
+                            ($Plan.ScheduleName -like '*Diff*' -and $SqlTask.BackupFileExtension -in ('dif', 'bak')) -or
+                            ($Plan.ScheduleName -like '*Trans*' -and $SqlTask.BackupFileExtension -eq 'trn')
+                        ) {
+                            [PSCustomObject]@{
+                                TaskName                 = if ($null -eq $SqlTask.TaskName -or $SqlTask.TaskName -eq '') { $Plan.JobName } else { $SqlTask.TaskName }
+                                Frequency                = $Plan.Frequency
+                                IgnoreNotOnlineDatabases = $SqlTask.IgnoreDatabasesInNotOnlineState
+                                BackupAction             = [BackupAction]$SqlTask.BackupAction
+                                BackupExtension          = $SqlTask.BackupFileExtension
+                                BackupDevice             = [BackupDevice]$SqlTask.BackupDeviceType
+                                Compression              = [BackupCompressionAction]$SqlTask.BackupCompressionAction
+                                CopyOnly                 = $SqlTask.CopyOnlyBackup
+                                IsEncrypted              = $SqlTask.IsBackupEncrypted
+                                HasChecksum              = $SqlTask.Checksum
+                                SelectedDatabases        = ($SqlTask.SelectedDatabases).DatabaseName
+                                PSTypeName               = 'MaintenancePlanDetails'
+                            }
                         }
                     }
                 }
