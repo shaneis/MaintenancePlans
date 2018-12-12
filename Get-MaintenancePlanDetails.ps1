@@ -1,4 +1,5 @@
 #requires -modules dbatools
+#requires -Version 5.1
 function Get-MaintenancePlanDetails {
     <#
         .SYNOPSIS
